@@ -32,8 +32,8 @@ def select_region(root: tk.Tk, done) -> None:
     canvas.pack(fill="both", expand=True)
     canvas.create_text(
         bounds.width // 2, 60,
-        text="Drag around the English captions   •   Esc to cancel",
-        fill="white", font=("Segoe UI", 24, "bold"),
+        text="영어 자막을 드래그하세요. 취소하려면 Esc를 누르세요.",
+        fill="white", font=("Malgun Gothic", 20, "bold"),
     )
     start = None
     outline = canvas.create_rectangle(0, 0, 0, 0, outline="white", width=3)
@@ -130,7 +130,7 @@ def read_captions(
             waiting: deque[str] = deque(maxlen=MAX_WAITING_TRANSLATIONS)
             future = None
             previous = None
-            events.put(("ready", "Reading English captions. Waiting for sentence ends."))
+            events.put(("ready", "영어 자막을 읽는 중…"))
             while not stop.is_set():
                 started = monotonic()
                 with capture_lock:
@@ -155,7 +155,7 @@ def read_captions(
                         events.put(("caption", ""))
                 stop.wait(max(0.0, POLL_SECONDS - (monotonic() - started)))
     except (OSError, RuntimeError, ValueError):
-        events.put(("error", "Could not read the screen or load the local model."))
+        events.put(("error", "화면을 읽거나 번역을 시작하지 못했습니다."))
     finally:
         # Release the native worker before the UI permits a restart or exit.
         translator = None
@@ -178,26 +178,21 @@ class CaptionDock:
         root.protocol("WM_DELETE_WINDOW", self.close)
         self.overlay = Overlay(root)
         self.cover = tk.BooleanVar(value=False)
-        self.status = tk.StringVar(value="Choose the English caption area.")
+        self.status = tk.StringVar(value="영어 자막 영역을 선택하세요.")
         content = ttk.Frame(root, padding=18)
         content.pack(fill="both", expand=True)
-        ttk.Label(content, text="Caption Dock",
-                  font=("Segoe UI", 20, "bold")).pack(anchor="w")
-        ttk.Label(content, text="English → Korean  ·  Offline",
-                  font=("Segoe UI", 10)).pack(anchor="w", pady=(0, 14))
         actions = ttk.Frame(content)
         actions.pack(fill="x")
-        self.select = ttk.Button(actions, text="Select area", command=self.pick)
+        self.select = ttk.Button(actions, text="영역 선택", command=self.pick)
         self.select.pack(side="left")
-        self.toggle = ttk.Button(actions, text="Start", command=self.toggle_capture,
+        self.toggle = ttk.Button(actions, text="시작", command=self.toggle_capture,
                                  state="disabled")
         self.toggle.pack(side="left", padx=6)
-        self.mode = ttk.Checkbutton(content, text="Cover the English captions",
+        self.mode = ttk.Checkbutton(content, text="영어 자막 가리기",
                                     variable=self.cover, command=self.change_mode)
         self.mode.pack(anchor="w", pady=(12, 0))
         if not self.overlay.excluded:
             self.mode.state(["disabled"])
-            self.status.set("Capture exclusion unavailable. Using adjacent subtitles.")
         ttk.Label(content, textvariable=self.status, wraplength=340,
                   width=48).pack(anchor="w", pady=(8, 0))
         root.after(60, self.drain)
@@ -211,16 +206,16 @@ class CaptionDock:
                 self.region = region
                 self.start()
             else:
-                self.status.set("Select just the caption lines (80–3200 × 20–1000 px).")
+                self.status.set("영어 자막 줄 전체를 다시 선택하세요.")
 
     def start(self) -> None:
         self.stop = Event()
         self.translation = ""
         self.cover_checked = False
         self.select.state(["disabled"])
-        self.toggle.configure(text="Pause")
+        self.toggle.configure(text="일시정지")
         self.toggle.state(["!disabled"])
-        self.status.set("Loading the offline translation model…")
+        self.status.set("번역을 준비하는 중…")
         Thread(
             target=read_captions,
             args=(self.region, self.stop, self.events, self.capture_lock),
@@ -234,7 +229,7 @@ class CaptionDock:
             self.stop.set()
             self.overlay.hide()
             self.toggle.state(["disabled"])
-            self.status.set("Pausing…")
+            self.status.set("멈추는 중…")
 
     def drain(self) -> None:
         while not self.events.empty():
@@ -248,10 +243,10 @@ class CaptionDock:
                     self.root.destroy()
                     break
                 if self.stop.is_set():
-                    self.status.set("Paused")
+                    self.status.set("일시정지됨")
                 self.stop = None
                 self.select.state(["!disabled"])
-                self.toggle.configure(text="Start")
+                self.toggle.configure(text="시작")
                 self.toggle.state(["!disabled"])
             elif not self.stop.is_set():
                 if kind == "caption":
@@ -283,7 +278,7 @@ class CaptionDock:
                     if not self.cover_checked:
                         self.cover.set(False)
                         self.status.set(
-                            "Cover would disrupt caption capture. Showing translation beside it."
+                            "원문을 읽을 수 있도록 번역을 옆에 표시합니다."
                         )
                 self.overlay.show(self.translation, self.region, self.cover.get())
         else:
@@ -297,7 +292,7 @@ class CaptionDock:
             self.stop.set()
             self.toggle.state(["disabled"])
             self.overlay.hide()
-            self.status.set("Closing…")
+            self.status.set("종료하는 중…")
 
 
 def main() -> None:
