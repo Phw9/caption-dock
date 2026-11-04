@@ -4,7 +4,8 @@ from pathlib import Path
 import tkinter as tk
 from time import perf_counter
 
-from pipeline import CaptionGate, Ocr, Translator
+from captions import SentenceBuffer
+from pipeline import Ocr, Translator
 import screen
 
 SAMPLE = "The meeting starts in five minutes."
@@ -20,14 +21,15 @@ def verify(report: Path, assets: Path, overlay_factory) -> None:
     result = {"passed": False}
     root = None
     try:
-        gate = CaptionGate()
-        gate.observe("The meeting", 1.0)
-        check(gate.take(1.2) is None, "Partial caption was emitted early.")
-        gate.observe(SAMPLE, 1.25)
-        check(gate.take(1.7) == SAMPLE, "Settled caption was not emitted.")
-        check(gate.take(1.9) is None, "Duplicate caption was emitted.")
-        gate.observe("", 2.0)
-        check(gate.take(2.5) == "", "Disappearing captions did not clear.")
+        sentences = SentenceBuffer()
+        sentences.observe("The meeting starts in", 1.0)
+        check(sentences.take(1.5) is None, "Partial caption was emitted early.")
+        sentences.observe("starts in five minutes.", 1.6)
+        check(sentences.take(2.0) == SAMPLE, "Rolling captions did not form a sentence.")
+        check(sentences.take(2.2) is None, "Duplicate caption was emitted.")
+        sentences.observe("", 2.3)
+        check(sentences.take(4.9) == "", "Disappearing captions did not clear.")
+        result["rolling_sentence"] = True
 
         root = tk.Tk()
         root.overrideredirect(True)
@@ -88,12 +90,23 @@ def verify(report: Path, assets: Path, overlay_factory) -> None:
         overlay.destroy()
         actual_overlay = overlay_factory(root)
         check(actual_overlay.excluded, "Caption Dock overlay could not be excluded.")
-        actual_overlay.show(translated, region, cover=True)
+        check(actual_overlay.try_cover(translated, region),
+              "The runtime cover check did not accept the unchanged capture.")
         root.update()
         screen.flush_compositor()
         check(actual_overlay.window.winfo_viewable(), "Caption Dock overlay was hidden.")
         check(screen.capture(region).tobytes() == reference.tobytes(),
               "Caption Dock overlay interfered with subsequent capture.")
+        check(screen.set_affinity(actual_overlay.handle, 0),
+              "Could not simulate an overlay that appears in capture.")
+        check(not actual_overlay.try_cover(translated, region),
+              "The runtime cover check accepted an obstructed capture.")
+        actual_overlay.show(translated, region, cover=False)
+        root.update()
+        screen.flush_compositor()
+        check(screen.capture(region).tobytes() == reference.tobytes(),
+              "The adjacent overlay interfered with capture.")
+        result["cover_fallback"] = True
         result["passed"] = True
     except (OSError, RuntimeError, ValueError, tk.TclError) as error:
         result["error"] = str(error)

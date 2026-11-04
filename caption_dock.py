@@ -1,19 +1,22 @@
 """Caption Dock for Windows."""
 import argparse
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 from pathlib import Path
 from queue import Empty, SimpleQueue
-import sys
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from time import monotonic
 import tkinter as tk
 from tkinter import ttk
 
-from pipeline import CaptionGate, Ocr, Translator
+from captions import SentenceBuffer
+from pipeline import Ocr, Translator
 import screen
 
 ASSETS = Path(__file__).resolve().parent / "assets"
 POLL_SECONDS = 0.18
+MAX_WAITING_TRANSLATIONS = 4
 BACKGROUND = "#121820"
 FOREGROUND = "#f2f6fb"
 
@@ -99,27 +102,57 @@ class Overlay:
         self.window.deiconify()
         screen.place(self.handle, screen.Region(region.x, y, region.width, height))
 
+    def try_cover(self, text: str, region: screen.Region) -> bool:
+        self.hide()
+        self.window.update_idletasks()
+        screen.flush_compositor()
+        before = screen.capture(region)
+        self.show(text, region, cover=True)
+        self.window.update_idletasks()
+        screen.flush_compositor()
+        after = screen.capture(region)
+        # A blank/redacted capture cannot demonstrate that the original is visible.
+        return bool(
+            self.window.winfo_viewable()
+            and (before != before[0, 0]).any()
+            and before.tobytes() == after.tobytes()
+        )
 
-def read_captions(region: screen.Region, stop: Event, events: SimpleQueue) -> None:
+
+def read_captions(
+    region: screen.Region, stop: Event, events: SimpleQueue, capture_lock
+) -> None:
     translator = None
     try:
         translator = Translator(ASSETS / "opus")
-        with Ocr(ASSETS) as ocr:
-            gate = CaptionGate()
+        with Ocr(ASSETS) as ocr, ThreadPoolExecutor(max_workers=1) as executor:
+            sentences = SentenceBuffer()
+            waiting: deque[str] = deque(maxlen=MAX_WAITING_TRANSLATIONS)
+            future = None
             previous = None
-            events.put(("ready", "Reading English captions"))
+            events.put(("ready", "Reading English captions. Waiting for sentence ends."))
             while not stop.is_set():
                 started = monotonic()
-                frame = screen.capture(region)
+                with capture_lock:
+                    frame = screen.capture(region)
                 fingerprint = hashlib.blake2s(frame.tobytes()).digest()
                 if fingerprint != previous:
-                    gate.observe(ocr.read(frame), monotonic())
+                    sentences.observe(ocr.read(frame), monotonic())
                     previous = fingerprint
-                caption = gate.take(monotonic())
+                caption = sentences.take(monotonic())
                 if caption is not None:
-                    translation = translator.translate(caption) if caption else ""
+                    waiting.append(caption)
+                if future is not None and future.done():
+                    translation = future.result()
                     if not stop.is_set():
                         events.put(("caption", translation))
+                    future = None
+                if future is None and waiting and not stop.is_set():
+                    next_caption = waiting.popleft()
+                    if next_caption:
+                        future = executor.submit(translator.translate, next_caption)
+                    else:
+                        events.put(("caption", ""))
                 stop.wait(max(0.0, POLL_SECONDS - (monotonic() - started)))
     except (OSError, RuntimeError, ValueError):
         events.put(("error", "Could not read the screen or load the local model."))
@@ -136,13 +169,15 @@ class CaptionDock:
         self.stop = None
         self.closing = False
         self.translation = ""
+        self.cover_checked = False
+        self.capture_lock = Lock()
         self.events = SimpleQueue()
         root.title("Caption Dock")
         root.geometry("+36+36")
         root.resizable(False, False)
         root.protocol("WM_DELETE_WINDOW", self.close)
         self.overlay = Overlay(root)
-        self.cover = tk.BooleanVar(value=self.overlay.excluded)
+        self.cover = tk.BooleanVar(value=False)
         self.status = tk.StringVar(value="Choose the English caption area.")
         content = ttk.Frame(root, padding=18)
         content.pack(fill="both", expand=True)
@@ -158,7 +193,7 @@ class CaptionDock:
                                  state="disabled")
         self.toggle.pack(side="left", padx=6)
         self.mode = ttk.Checkbutton(content, text="Cover the English captions",
-                                    variable=self.cover, command=self.redraw)
+                                    variable=self.cover, command=self.change_mode)
         self.mode.pack(anchor="w", pady=(12, 0))
         if not self.overlay.excluded:
             self.mode.state(["disabled"])
@@ -181,12 +216,16 @@ class CaptionDock:
     def start(self) -> None:
         self.stop = Event()
         self.translation = ""
+        self.cover_checked = False
         self.select.state(["disabled"])
         self.toggle.configure(text="Pause")
         self.toggle.state(["!disabled"])
         self.status.set("Loading the offline translation model…")
-        Thread(target=read_captions, args=(self.region, self.stop, self.events),
-               daemon=True).start()
+        Thread(
+            target=read_captions,
+            args=(self.region, self.stop, self.events, self.capture_lock),
+            daemon=True,
+        ).start()
 
     def toggle_capture(self) -> None:
         if self.stop is None:
@@ -227,9 +266,26 @@ class CaptionDock:
         if not self.closing or self.stop is not None:
             self.root.after(60, self.drain)
 
+    def change_mode(self) -> None:
+        self.cover_checked = False
+        self.redraw()
+
     def redraw(self) -> None:
         if self.stop is not None and not self.stop.is_set() and self.translation:
-            self.overlay.show(self.translation, self.region, self.cover.get())
+            with self.capture_lock:
+                if self.cover.get() and not self.cover_checked:
+                    try:
+                        self.cover_checked = self.overlay.try_cover(
+                            self.translation, self.region
+                        )
+                    except OSError:
+                        self.cover_checked = False
+                    if not self.cover_checked:
+                        self.cover.set(False)
+                        self.status.set(
+                            "Cover would disrupt caption capture. Showing translation beside it."
+                        )
+                self.overlay.show(self.translation, self.region, self.cover.get())
         else:
             self.overlay.hide()
 

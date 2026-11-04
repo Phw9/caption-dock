@@ -7,7 +7,8 @@ param(
 $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true
 $root = Split-Path -Parent $PSScriptRoot
-$exeName = "caption-dock-v0.1.0-portable"
+$version = "0.1.1"
+$exeName = "caption-dock-v$version-portable"
 $Python = (Resolve-Path -LiteralPath $Python).Path
 $NativeRoot = (Resolve-Path -LiteralPath $NativeRoot).Path
 $NativeInstall = (Resolve-Path -LiteralPath $NativeInstall).Path
@@ -101,7 +102,7 @@ try {
         --add-data "$root/assets/opus:assets/opus" `
         --add-data "$root/licenses:licenses" "$root/caption_dock.py"
 
-    Compress-Archive -Path licenses/* -DestinationPath dist/caption-dock-v0.1.0-licenses.zip -Force
+    Compress-Archive -Path licenses/* -DestinationPath "dist/caption-dock-v$version-licenses.zip" -Force
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath "dist/$exeName.exe").Hash.ToLowerInvariant()
     "$hash  $exeName.exe" | Set-Content -Encoding ascii "dist/$exeName.exe.sha256"
 } finally {

@@ -1,5 +1,4 @@
 """Local OCR, caption stabilization, and CPU translation."""
-from dataclasses import dataclass
 import ctypes
 import re
 from pathlib import Path
@@ -8,37 +7,7 @@ import ctranslate2
 import numpy as np
 import sentencepiece
 
-STABLE_SECONDS = 0.35
-MAX_WAIT_SECONDS = 1.1
 MAX_SOURCE_TOKENS = 180
-
-
-@dataclass
-class CaptionGate:
-    pending: str = ""
-    displayed: str = ""
-    changed_at: float = 0.0
-    started_at: float | None = None
-
-    def observe(self, text: str, now: float) -> None:
-        if text != self.pending:
-            if self.started_at is None:
-                self.started_at = now
-            self.pending = text
-            self.changed_at = now
-
-    def take(self, now: float) -> str | None:
-        result = None
-        if self.pending == self.displayed:
-            self.started_at = None
-        elif self.started_at is not None and (
-            now - self.changed_at >= STABLE_SECONDS
-            or now - self.started_at >= MAX_WAIT_SECONDS
-        ):
-            self.displayed = self.pending
-            self.started_at = None
-            result = self.pending
-        return result
 
 
 class Translator:
