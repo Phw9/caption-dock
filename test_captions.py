@@ -5,6 +5,24 @@ from captions import SentenceBuffer
 
 
 class SentenceBufferTest(unittest.TestCase):
+    def test_clipped_history_does_not_retranslate_a_finished_sentence(self) -> None:
+        captions = SentenceBuffer()
+        captions.observe(
+            "We need to update the camera calibration before the next release. "
+            "Then we can ship it.", 1.0,
+        )
+        self.assertEqual(
+            captions.take(1.3),
+            "We need to update the camera calibration before the next release.",
+        )
+        captions.observe(
+            "mera calibration before the next release. Then we can ship it. "
+            "Please check it.", 1.4,
+        )
+        self.assertEqual(captions.take(1.8), "Then we can ship it.")
+        self.assertEqual(captions.take(2.1), "Please check it.")
+        self.assertIsNone(captions.take(2.5))
+
     def test_joins_overlapping_and_nonoverlapping_fragments(self) -> None:
         captions = SentenceBuffer()
         captions.observe("Please check the", 1.0)

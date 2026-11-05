@@ -7,11 +7,13 @@ import re
 from collections.abc import Callable
 
 from captions import SentenceBuffer
+from captions import sentence_end
 
 MIN_LINE_CONFIDENCE = 35
 HEADER_HEIGHT_RATIO = 0.8
 MAX_HEADER_WORDS = 8
 MAX_SPEAKERS = 8
+ACCOUNT_LABEL = re.compile(r"[\w.+-]+\s*@\s*[\w.-]+\.[A-Za-z]{2,}")
 TSV_COLUMNS = ("level", "page_num", "block_num", "par_num", "line_num",
                "word_num", "left", "top", "width", "height", "conf", "text")
 
@@ -53,7 +55,9 @@ def read_tsv(text: str) -> list[CaptionLine]:
     return sorted(lines, key=lambda line: (line.top, line.left))
 
 
-def split_speech(lines: list[CaptionLine], separate_speakers: bool) -> list[Speech]:
+def split_speech(
+    lines: list[CaptionLine], separate_speakers: bool, previous_speaker: str = ""
+) -> list[Speech]:
     speech = []
     if lines:
         if not separate_speakers:
@@ -65,24 +69,48 @@ def split_speech(lines: list[CaptionLine], separate_speakers: bool) -> list[Spee
             if text:
                 speech.append(Speech("", text))
         else:
-            speaker = lines[0].text
+            account_rows = {
+                index for index, line in enumerate(lines)
+                if ACCOUNT_LABEL.fullmatch(line.text.strip())
+            }
+            headings = account_rows
+            if not headings:
+                body_height = max(line.height for line in lines)
+                headings = {0}
+                for index, line in enumerate(lines[1:], 1):
+                    words = line.text.split()
+                    name_shape = (
+                        all(word[0].isupper() for word in words)
+                        or bool(re.search(r"[_@\d]", line.text))
+                    )
+                    if (
+                        line.height <= body_height * HEADER_HEIGHT_RATIO
+                        and len(words) <= MAX_HEADER_WORDS and name_shape
+                        and not sentence_end(words[-1])
+                    ):
+                        headings.add(index)
+            speaker = previous_speaker
             body: list[str] = []
-            body_height = max(line.height for line in lines)
-            for index, line in enumerate(lines[1:], 1):
-                # Teams uses a smaller row for each speaker's display name.
-                heading = (
-                    line.height <= body_height * HEADER_HEIGHT_RATIO
-                    and len(line.text.split()) <= MAX_HEADER_WORDS
-                    and line.top - (lines[index - 1].top + lines[index - 1].height)
-                    >= body_height * 0.75
-                )
-                if heading:
-                    speech.append(Speech(speaker, " ".join(body)))
-                    speaker, body = line.text, []
-                elif line.confidence >= MIN_LINE_CONFIDENCE:
+            for index, line in enumerate(lines):
+                if index in headings:
+                    if speaker:
+                        append_speech(speech, speaker, body)
+                    speaker = re.sub(r"\s+", "", line.text) if index in account_rows else line.text
+                    body = []
+                elif speaker and line.confidence >= MIN_LINE_CONFIDENCE:
                     body.append(line.text)
-            speech.append(Speech(speaker, " ".join(body)))
+            if speaker:
+                append_speech(speech, speaker, body)
     return speech
+
+
+def append_speech(speech: list[Speech], speaker: str, body: list[str]) -> None:
+    text = " ".join(body)
+    if speech and speech[-1].speaker == speaker:
+        text = " ".join(filter(None, (speech[-1].text, text)))
+        speech[-1] = Speech(speaker, text)
+    else:
+        speech.append(Speech(speaker, text))
 
 
 class SpeechBuffer:

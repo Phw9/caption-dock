@@ -12,6 +12,37 @@ def team_rows(name: str, *text: str) -> list[CaptionLine]:
 
 
 class TeamsCaptionTest(unittest.TestCase):
+    def test_compact_repeated_account_rows_are_not_speech(self) -> None:
+        lines = [
+            CaptionLine("alex@example.com", 0, 12),
+            CaptionLine("We need to update the", 18, 18),
+            CaptionLine("alex@example.com", 42, 12),
+            CaptionLine("camera calibration.", 60, 18),
+        ]
+        self.assertEqual(split_speech(lines, True), [
+            Speech("alex@example.com", "We need to update the camera calibration.")
+        ])
+
+    def test_cropped_top_row_keeps_previous_speaker(self) -> None:
+        lines = [
+            CaptionLine("update the camera", 0, 18),
+            CaptionLine("alex@example.com", 25, 12),
+            CaptionLine("calibration before the release.", 43, 18),
+        ]
+        self.assertEqual(split_speech(lines, True, "alex@example.com"), [
+            Speech("alex@example.com", "update the camera calibration before the release.")
+        ])
+
+    def test_caption_before_first_known_account_is_not_a_speaker(self) -> None:
+        lines = [
+            CaptionLine("old clipped words.", 0, 12),
+            CaptionLine("alex@example.com", 25, 12),
+            CaptionLine("Please check the camera.", 43, 18),
+        ]
+        self.assertEqual(split_speech(lines, True), [
+            Speech("alex@example.com", "Please check the camera.")
+        ])
+
     def test_header_is_separate_and_wrapped_words_stay_together(self) -> None:
         speech = split_speech(team_rows("alex.kim", "We need to update the", "camera calibration."), True)
         self.assertEqual(speech, [Speech("alex.kim", "We need to update the camera calibration.")])

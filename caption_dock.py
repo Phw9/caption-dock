@@ -142,7 +142,9 @@ def read_captions(
                 fingerprint = hashlib.blake2s(frame.tobytes()).digest()
                 if fingerprint != previous:
                     sentences.observe(
-                        split_speech(ocr.read_lines(frame), separate_speakers),
+                        split_speech(
+                            ocr.read_lines(frame), separate_speakers, sentences.active
+                        ),
                         monotonic(),
                     )
                     previous = fingerprint

@@ -1,5 +1,6 @@
 """Assemble sentences from successive snapshots of a rolling caption area."""
 import re
+from difflib import Match, SequenceMatcher
 
 SETTLE_SECONDS = 0.25
 QUIET_SECONDS = 1.8
@@ -7,6 +8,7 @@ MAX_PENDING_SECONDS = 8.0
 CLEAR_SECONDS = 2.4
 MAX_SENTENCE_WORDS = 48
 HISTORY_WORDS = 96
+MIN_HISTORY_MATCH_WORDS = 3
 ABBREVIATIONS = {"mr.", "mrs.", "ms.", "dr.", "prof.", "sr.", "jr.",
                  "e.g.", "i.e.", "vs.", "etc.", "a.m.", "p.m."}
 
@@ -44,7 +46,22 @@ def align(previous: list[str], current: list[str]) -> int:
     offset = len(old) - overlap
     if prefix >= overlap and (prefix >= 2 or prefix == limit > 0):
         offset = 0
+    match = matching_history(old, new)
+    if match is not None:
+        offset = match.a - match.b
     return offset
+
+
+def matching_history(previous: list[str], current: list[str]) -> Match | None:
+    match = SequenceMatcher(None, previous, current, autojunk=False).find_longest_match()
+    trusted = (
+        match.size >= MIN_HISTORY_MATCH_WORDS
+        and (
+            match.a + match.size == len(previous)
+            or match.b + match.size == len(current)
+        )
+    )
+    return match if trusted else None
 
 
 class SentenceBuffer:
@@ -68,11 +85,16 @@ class SentenceBuffer:
         else:
             self.blank_at = None
             if current != self.previous:
-                start = self.previous_start + align(self.previous, current)
+                start = max(0, self.previous_start + align(self.previous, current))
                 consumed = min(max(0, self.committed - start), len(current))
-                if [word_key(word) for word in current[:consumed]] != [
+                mismatch = [word_key(word) for word in current[:consumed]] != [
                     word_key(word) for word in self.words[start:start + consumed]
-                ]:
+                ]
+                shared = matching_history(
+                    [word_key(word) for word in self.previous],
+                    [word_key(word) for word in current],
+                )
+                if mismatch and shared is None:
                     start = len(self.words)
                 keep = max(start, self.committed)
                 updated = self.words[:keep] + current[keep - start:]
