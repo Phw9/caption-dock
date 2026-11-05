@@ -108,6 +108,19 @@ class SentenceBuffer:
             self.committed -= drop
             self.previous_start -= drop
 
+    def finish(self, now: float) -> str | None:
+        pending = self.words[self.committed:]
+        result = None
+        if pending:
+            if pending != self.preview:
+                result = " ".join(pending)
+            self.committed = len(self.words)
+            self.preview.clear()
+            self.started_at = None
+            self.refresh_complete(now)
+            self.trim_history()
+        return result
+
     def take(self, now: float) -> str | None:
         result = None
         pending = self.words[self.committed:]

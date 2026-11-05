@@ -6,9 +6,51 @@ from time import perf_counter
 
 from captions import SentenceBuffer
 from pipeline import Ocr, Translator
+from speech import SpeechBuffer, display_translation, split_speech
 import screen
 
 SAMPLE = "The meeting starts in five minutes."
+
+def verify_speaker_caption(root: tk.Tk, assets: Path, engine: Translator) -> dict:
+    for child in root.winfo_children():
+        child.destroy()
+    root.geometry("760x170+100+150")
+    name = tk.Label(
+        root, text="Alex Kim", font=("Segoe UI", 12, "bold"),
+        foreground="#b0b0b0", background="#202020", anchor="w",
+    )
+    name.pack(fill="x", padx=12, pady=(8, 10))
+    body = tk.Label(
+        root, text="We need to update the\ncamera", font=("Segoe UI", 20),
+        foreground="white", background="#202020", justify="left", anchor="w",
+    )
+    body.pack(fill="both", expand=True, padx=12)
+    root.configure(background="#202020")
+    region = screen.Region(100, 150, 760, 170)
+    root.update()
+    screen.flush_compositor()
+    buffer = SpeechBuffer()
+    with Ocr(assets) as ocr:
+        first = split_speech(ocr.read_lines(screen.capture(region)), True)
+        check(bool(first) and first[0].speaker == "Alex Kim",
+              "The OCR name row was not preserved separately.")
+        buffer.observe(first, 1.0)
+        check(not buffer.take(1.5), "A partial Teams caption was translated early.")
+        body.configure(text="camera calibration before\nthe next release.")
+        root.update()
+        screen.flush_compositor()
+        second = split_speech(ocr.read_lines(screen.capture(region)), True)
+        buffer.observe(second, 1.6)
+        utterances = buffer.take(2.0)
+    expected = "We need to update the camera calibration before the next release."
+    check(len(utterances) == 1 and utterances[0].text == expected,
+          "Teams caption rows were not assembled without the name.")
+    translated = engine.translate(utterances[0].text)
+    rendered = display_translation(utterances[0], translated)
+    check(rendered.startswith("Alex Kim\n"), "The display name lost its own row.")
+    check(any("\uac00" <= char <= "\ud7a3" for char in translated),
+          "The completed Teams caption was not translated to Korean.")
+    return {"speaker": utterances[0].speaker, "source": expected, "translated": translated}
 
 
 def check(condition: bool, message: str) -> None:
@@ -107,6 +149,7 @@ def verify(report: Path, assets: Path, overlay_factory) -> None:
         check(screen.capture(region).tobytes() == reference.tobytes(),
               "The adjacent overlay interfered with capture.")
         result["cover_fallback"] = True
+        result["teams_name_rows"] = verify_speaker_caption(root, assets, engine)
         result["passed"] = True
     except (OSError, RuntimeError, ValueError, tk.TclError) as error:
         result["error"] = str(error)

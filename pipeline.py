@@ -1,11 +1,11 @@
 """Local OCR, caption stabilization, and CPU translation."""
 import ctypes
-import re
 from pathlib import Path
 
 import ctranslate2
 import numpy as np
 import sentencepiece
+from speech import CaptionLine, read_tsv
 
 MAX_SOURCE_TOKENS = 180
 
@@ -48,9 +48,8 @@ class Ocr:
         self.set_image = self.bind("TessBaseAPISetImage", None, handle,
                                    ctypes.c_char_p, integer, integer,
                                    integer, integer)
-        self.get_text = self.bind("TessBaseAPIGetUTF8Text", handle, handle)
+        self.get_tsv = self.bind("TessBaseAPIGetTsvText", handle, handle, integer)
         self.delete_text = self.bind("TessDeleteText", None, handle)
-        self.confidence = self.bind("TessBaseAPIMeanTextConf", integer, handle)
         self.clear = self.bind("TessBaseAPIClear", None, handle)
         model = (assets / "tessdata" / "eng.traineddata").read_bytes()
         self.api = self.create()
@@ -76,6 +75,9 @@ class Ocr:
         self.delete(self.api)
 
     def read(self, image: np.ndarray) -> str:
+        return "\n".join(line.text for line in self.read_lines(image))
+
+    def read_lines(self, image: np.ndarray) -> list[CaptionLine]:
         # Convert BGR to luminance with integer BT.601 weights scaled to 256.
         blue, green, red = image.astype(np.uint16).transpose(2, 0, 1)
         gray = ((29 * blue + 150 * green + 77 * red) >> 8).astype(np.uint8)
@@ -90,28 +92,28 @@ class Ocr:
         if gray.shape[0] < 180 and gray.shape[1] <= 900:
             gray = gray.repeat(2, axis=0).repeat(2, axis=1)
         low, high = int(gray.min()), int(gray.max())
-        text = ""
+        lines = []
         if high - low >= 16:
             gray = ((gray.astype(np.uint16) - low) * 255 // (high - low)).astype(
                 np.uint8
             )
-            text = self.recognize(np.pad(gray, 12, constant_values=255))
-        return text
+            lines = self.recognize_lines(np.pad(gray, 12, constant_values=255))
+        return lines
 
     def recognize(self, gray: np.ndarray) -> str:
+        return "\n".join(line.text for line in self.recognize_lines(gray))
+
+    def recognize_lines(self, gray: np.ndarray) -> list[CaptionLine]:
         height, width = gray.shape
         pixels = gray.tobytes()
         self.set_image(self.api, pixels, width, height, 1, width)
-        output = self.get_text(self.api)
-        text = ""
+        output = self.get_tsv(self.api, 0)
+        lines = []
         try:
-            if output and self.confidence(self.api) >= 35:
-                text = ctypes.string_at(output).decode("utf-8")
+            if output:
+                lines = read_tsv(ctypes.string_at(output).decode("utf-8"))
         finally:
             if output:
                 self.delete_text(output)
             self.clear(self.api)
-        normalized = re.sub(r"\s+", " ", text).strip()
-        if not re.search(r"[A-Za-z]", normalized):
-            normalized = ""
-        return normalized
+        return lines

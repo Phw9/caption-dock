@@ -10,8 +10,8 @@ from time import monotonic
 import tkinter as tk
 from tkinter import ttk
 
-from captions import SentenceBuffer
 from pipeline import Ocr, Translator
+from speech import Speech, SpeechBuffer, split_speech, translate_speech
 import screen
 
 ASSETS = Path(__file__).resolve().parent / "assets"
@@ -88,7 +88,10 @@ class Overlay:
         self.window.withdraw()
 
     def show(self, text: str, region: screen.Region, cover: bool) -> None:
-        self.label.configure(text=text, wraplength=max(50, region.width - 24))
+        self.label.configure(
+            text=text, wraplength=max(50, region.width - 24),
+            justify="left" if "\n" in text else "center",
+        )
         self.label.update_idletasks()
         height = self.label.winfo_reqheight()
         if cover and self.excluded:
@@ -120,14 +123,15 @@ class Overlay:
 
 
 def read_captions(
-    region: screen.Region, stop: Event, events: SimpleQueue, capture_lock
+    region: screen.Region, stop: Event, events: SimpleQueue, capture_lock,
+    separate_speakers: bool = False,
 ) -> None:
     translator = None
     try:
         translator = Translator(ASSETS / "opus")
         with Ocr(ASSETS) as ocr, ThreadPoolExecutor(max_workers=1) as executor:
-            sentences = SentenceBuffer()
-            waiting: deque[str] = deque(maxlen=MAX_WAITING_TRANSLATIONS)
+            sentences = SpeechBuffer()
+            waiting: deque[Speech] = deque(maxlen=MAX_WAITING_TRANSLATIONS)
             future = None
             previous = None
             events.put(("ready", "영어 자막을 읽는 중…"))
@@ -137,11 +141,12 @@ def read_captions(
                     frame = screen.capture(region)
                 fingerprint = hashlib.blake2s(frame.tobytes()).digest()
                 if fingerprint != previous:
-                    sentences.observe(ocr.read(frame), monotonic())
+                    sentences.observe(
+                        split_speech(ocr.read_lines(frame), separate_speakers),
+                        monotonic(),
+                    )
                     previous = fingerprint
-                caption = sentences.take(monotonic())
-                if caption is not None:
-                    waiting.append(caption)
+                waiting.extend(sentences.take(monotonic()))
                 if future is not None and future.done():
                     translation = future.result()
                     if not stop.is_set():
@@ -149,8 +154,10 @@ def read_captions(
                     future = None
                 if future is None and waiting and not stop.is_set():
                     next_caption = waiting.popleft()
-                    if next_caption:
-                        future = executor.submit(translator.translate, next_caption)
+                    if next_caption.text:
+                        future = executor.submit(
+                            translate_speech, next_caption, translator.translate
+                        )
                     else:
                         events.put(("caption", ""))
                 stop.wait(max(0.0, POLL_SECONDS - (monotonic() - started)))
@@ -178,6 +185,7 @@ class CaptionDock:
         root.protocol("WM_DELETE_WINDOW", self.close)
         self.overlay = Overlay(root)
         self.cover = tk.BooleanVar(value=False)
+        self.speakers = tk.BooleanVar(value=False)
         self.status = tk.StringVar(value="영어 자막 영역을 선택하세요.")
         content = ttk.Frame(root, padding=18)
         content.pack(fill="both", expand=True)
@@ -191,6 +199,10 @@ class CaptionDock:
         self.mode = ttk.Checkbutton(content, text="영어 자막 가리기",
                                     variable=self.cover, command=self.change_mode)
         self.mode.pack(anchor="w", pady=(12, 0))
+        self.speaker_mode = ttk.Checkbutton(
+            content, text="Teams 화자 이름 분리", variable=self.speakers
+        )
+        self.speaker_mode.pack(anchor="w", pady=(6, 0))
         if not self.overlay.excluded:
             self.mode.state(["disabled"])
         ttk.Label(content, textvariable=self.status, wraplength=340,
@@ -213,12 +225,14 @@ class CaptionDock:
         self.translation = ""
         self.cover_checked = False
         self.select.state(["disabled"])
+        self.speaker_mode.state(["disabled"])
         self.toggle.configure(text="일시정지")
         self.toggle.state(["!disabled"])
         self.status.set("번역을 준비하는 중…")
         Thread(
             target=read_captions,
-            args=(self.region, self.stop, self.events, self.capture_lock),
+            args=(self.region, self.stop, self.events, self.capture_lock,
+                  self.speakers.get()),
             daemon=True,
         ).start()
 
@@ -246,6 +260,7 @@ class CaptionDock:
                     self.status.set("일시정지됨")
                 self.stop = None
                 self.select.state(["!disabled"])
+                self.speaker_mode.state(["!disabled"])
                 self.toggle.configure(text="시작")
                 self.toggle.state(["!disabled"])
             elif not self.stop.is_set():
