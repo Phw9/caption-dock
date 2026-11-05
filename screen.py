@@ -104,11 +104,14 @@ def place(handle: int, region: Region) -> None:
         raise c.WinError(c.get_last_error())
 
 
-def exclude_overlay(handle: int) -> bool:
+def exclude_overlay(handle: int, interactive: bool = False) -> bool:
     style = get_style(handle, GWL_EXSTYLE)
+    if interactive:
+        style &= ~(WS_EX_TRANSPARENT | WS_EX_NOACTIVATE)
+    else:
+        style |= WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE
     set_style(
-        handle, GWL_EXSTYLE,
-        style | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        handle, GWL_EXSTYLE, style,
     )
     return bool(set_affinity(handle, WDA_EXCLUDEFROMCAPTURE))
 

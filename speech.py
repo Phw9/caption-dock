@@ -16,6 +16,8 @@ HEADER_HEIGHT_RATIO = 0.8
 MAX_HEADER_WORDS = 8
 MAX_SPEAKERS = 8
 MAX_SPEAKER_LABEL = 32
+MAX_CONTROL_GAP_HEIGHTS = 8
+CONTROL_GLYPHS = frozenset(("x", "×", "✕"))
 TEXT_COLUMN_TOLERANCE = 6
 ACCOUNT_SIMILARITY = 0.80
 ACCOUNT_LABEL = re.compile(r"[\w.+-]+\s*@\s*[\w.-]+\.[A-Za-z]{2,}")
@@ -32,6 +34,7 @@ class CaptionWord:
     height: int
     left: int
     confidence: float
+    width: int = 0
 
 
 @dataclass(frozen=True)
@@ -71,6 +74,7 @@ def read_tsv(text: str) -> list[CaptionLine]:
             tuple(CaptionWord(
                 word["text"].strip(), int(word["top"]), int(word["height"]),
                 int(word["left"]), float(word["conf"]),
+                int(word["width"]),
             ) for word in words),
         ))
     return sorted(lines, key=lambda line: (line.top, line.left))
@@ -79,21 +83,47 @@ def read_tsv(text: str) -> list[CaptionLine]:
 def account_column(line: CaptionLine) -> int | None:
     column = None
     match = ACCOUNT_LABEL.search(line.text) or ACCOUNT_TOKEN.search(line.text)
-    if match and match.end() == len(line.text.rstrip()):
+    if match:
         prefix = []
+        suffix = []
         account_left = line.left
+        account_right = line.left
         offset = 0
         for word in line.words:
             if offset <= match.start() < offset + len(word.text):
                 account_left = word.left
+            if offset >= match.end():
+                suffix.append(word)
             elif offset < match.start():
                 prefix.append(word)
+            else:
+                account_right = max(account_right, word.left + word.width)
             offset += len(word.text) + 1
-        if match.start() == 0 or (prefix and all(
+        prefix_ok = match.start() == 0 or (prefix and all(
             word.confidence < MAX_AVATAR_CONFIDENCE for word in prefix
-        )):
+        ))
+        suffix_ok = match.end() == len(line.text.rstrip()) or (suffix and all(
+            word.text.casefold() in CONTROL_GLYPHS
+            and word.left - account_right > word.height * MAX_CONTROL_GAP_HEIGHTS
+            for word in suffix
+        ))
+        if prefix_ok and suffix_ok:
             column = account_left
     return column
+
+
+def caption_words(line: CaptionLine, left: int) -> tuple[CaptionWord, ...]:
+    words = []
+    end = left
+    for word in line.words:
+        isolated_control = (
+            word.text.casefold() in CONTROL_GLYPHS
+            and word.left - end > word.height * MAX_CONTROL_GAP_HEIGHTS
+        )
+        if word.left >= left and not isolated_control:
+            words.append(word)
+            end = word.left + word.width
+    return tuple(words)
 
 
 def clean_teams_lines(lines: list[CaptionLine]) -> list[CaptionLine]:
@@ -104,7 +134,7 @@ def clean_teams_lines(lines: list[CaptionLine]) -> list[CaptionLine]:
         left = sorted(anchors)[len(anchors) // 2] - TEXT_COLUMN_TOLERANCE
         cleaned = []
         for line in lines:
-            words = tuple(word for word in line.words if word.left >= left)
+            words = caption_words(line, left)
             if words:
                 top = min(word.top for word in words)
                 bottom = max(word.top + word.height for word in words)
@@ -164,7 +194,8 @@ def speaker_label(speaker: str) -> str:
 
 
 def split_speech(
-    lines: list[CaptionLine], separate_speakers: bool, previous_speaker: str = ""
+    lines: list[CaptionLine], separate_speakers: bool, previous_speaker: str = "",
+    merge_same_speaker: bool = True,
 ) -> list[Speech]:
     speech = []
     if lines:
@@ -194,20 +225,22 @@ def split_speech(
             for index, line in enumerate(lines):
                 if index in headings:
                     if speaker or body:
-                        append_speech(speech, speaker, body)
+                        append_speech(speech, speaker, body, merge_same_speaker)
                     speaker = headings[index]
                     body = []
                 elif speaker or not headings or index > first_heading:
                     if line.confidence >= MIN_LINE_CONFIDENCE:
                         body.append(line.text)
             if speaker or body:
-                append_speech(speech, speaker, body)
+                append_speech(speech, speaker, body, merge_same_speaker)
     return speech
 
 
-def append_speech(speech: list[Speech], speaker: str, body: list[str]) -> None:
+def append_speech(
+    speech: list[Speech], speaker: str, body: list[str], merge_same_speaker: bool = True
+) -> None:
     text = " ".join(body)
-    if speech and speech[-1].speaker == speaker:
+    if merge_same_speaker and speech and speech[-1].speaker == speaker:
         text = " ".join(filter(None, (speech[-1].text, text)))
         speech[-1] = Speech(speaker, text)
     else:

@@ -12,6 +12,19 @@ def team_rows(name: str, *text: str) -> list[CaptionLine]:
 
 
 class TeamsCaptionTest(unittest.TestCase):
+    def test_distant_close_button_is_not_a_caption_word(self) -> None:
+        lines = [CaptionLine("alex@example.com x", 0, 20, 20, 90, (
+            CaptionWord("alex@example.com", 0, 14, 20, 90, 160),
+            CaptionWord("x", 0, 20, 700, 90, 15),
+        )), CaptionLine("Please check X", 22, 20, 20, 95, (
+            CaptionWord("Please", 22, 20, 20, 95, 60),
+            CaptionWord("check", 22, 20, 90, 95, 60),
+            CaptionWord("X", 22, 20, 160, 95, 15),
+        ))]
+        self.assertEqual(split_speech(lines, True), [
+            Speech("alex@example.com", "Please check X")
+        ])
+
     def test_avatar_tokens_are_removed_from_account_and_body_rows(self) -> None:
         lines = [
             CaptionLine("spay alex@example.com", 0, 26, 12, 45, (

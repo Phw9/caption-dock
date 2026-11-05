@@ -7,7 +7,7 @@ QUIET_SECONDS = 1.8
 MAX_PENDING_SECONDS = 8.0
 CLEAR_SECONDS = 2.4
 MAX_SENTENCE_WORDS = 48
-HISTORY_WORDS = 96
+HISTORY_WORDS = 384
 MIN_HISTORY_MATCH_WORDS = 3
 ABBREVIATIONS = {"mr.", "mrs.", "ms.", "dr.", "prof.", "sr.", "jr.",
                  "e.g.", "i.e.", "vs.", "etc.", "a.m.", "p.m."}

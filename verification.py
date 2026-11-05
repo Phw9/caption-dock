@@ -1,15 +1,111 @@
 """Smoke test the packaged Windows path against a synthetic caption."""
 import json
 from pathlib import Path
+from queue import SimpleQueue
+from threading import Event, Lock, Thread
 import tkinter as tk
-from time import perf_counter
+from time import monotonic, perf_counter, sleep
 
 from captions import SentenceBuffer
 from pipeline import Ocr, Translator
 from speech import Speech, SpeechBuffer, display_translation, split_speech
+from transcript import CaptionRequest
+from worker import read_captions
 import screen
 
 SAMPLE = "The meeting starts in five minutes."
+
+
+def verify_runtime(root: tk.Tk, viewer_factory) -> dict:
+    for child in root.winfo_children():
+        child.destroy()
+    root.configure(background="white")
+    region = screen.Region(100, 150, 1000, 360)
+    screen.place(screen.hwnd(root), region)
+    sentences = [SAMPLE, "The camera is ready.", "Please check the build.",
+                 "We can start the test.", "We need to update the"]
+    bodies = []
+    for index, source in enumerate(sentences):
+        top = index * 68
+        tk.Label(root, text="alex@example.com", font=("Segoe UI", 10, "bold"),
+                 background="white", foreground="#242424").place(x=24, y=top)
+        body = tk.Label(root, text=source, font=("Segoe UI", 16),
+                        background="white", foreground="#242424")
+        body.place(x=24, y=top + 22)
+        bodies.append(body)
+    root.update()
+    screen.flush_compositor()
+    viewer = viewer_factory(root)
+    stop = Event()
+    events = SimpleQueue()
+    worker = Thread(target=read_captions,
+                    args=(region, stop, events, Lock(), True), daemon=True)
+    rendered: dict[str, float] = {}
+
+    def pump() -> None:
+        root.update()
+        while not events.empty():
+            kind, value = events.get_nowait()
+            if kind == "pending":
+                viewer.pending(value)
+            elif kind == "caption":
+                request, translated, _duration = value
+                if viewer.complete(request, translated):
+                    rendered[request.speech.text] = monotonic()
+            elif kind == "error":
+                raise RuntimeError(value)
+
+    def wait_for(predicate) -> None:
+        deadline = monotonic() + 15
+        while not predicate() and monotonic() < deadline:
+            pump()
+            sleep(0.02)
+        check(predicate(), "The live transcript did not produce all expected rows.")
+
+    expected = "We need to update the camera calibration before the next release."
+    try:
+        worker.start()
+        wait_for(lambda: all(source in rendered for source in sentences[:4]))
+        bodies[-1].configure(text=expected)
+        root.update()
+        changed_at = monotonic()
+        wait_for(lambda: expected in rendered)
+        live_ms = round((rendered[expected] - changed_at) * 1000)
+        entries = list(viewer.history.rows.values())
+        check(len(entries) == 5, "A live preview was appended as a duplicate row.")
+        check([entry.request.speech.text for entry in entries] == sentences[:4] + [expected],
+              "The visible captions lost their original order.")
+        check(all(entry.translated for entry in entries), "A visible caption was not translated.")
+        check("카메라" in entries[-1].translated and "릴리스" in entries[-1].translated,
+              "The final live sentence was not assembled and translated correctly.")
+        old_geometry = viewer.window.geometry()
+        viewer.window.geometry("560x340+180+200")
+        root.update()
+        moved_geometry = viewer.window.geometry()
+        viewer.zoom(2)
+        check(viewer.window.geometry() == moved_geometry,
+              "A caption/font update reset the translation window geometry.")
+        check(old_geometry != moved_geometry, "The translation window did not resize.")
+        check(viewer.window.resizable() == (1, 1), "The translation window is not resizable.")
+        for child in list(root.winfo_children()):
+            if child is not viewer.window:
+                child.place_forget()
+        root.update()
+        deadline = monotonic() + 2.7
+        while monotonic() < deadline:
+            pump()
+            sleep(0.02)
+        check(len(viewer.history.rows) == 5, "Source captions clearing erased translated history.")
+        viewer.dismiss()
+        viewer.render()
+        check(viewer.window.state() == "withdrawn", "Caption updates reopened a dismissed window.")
+        viewer.reopen()
+    finally:
+        stop.set()
+        worker.join(5)
+        check(not worker.is_alive(), "The live caption worker did not stop.")
+    return {"translated_rows": 5, "live_update_ms": live_ms,
+            "preview_replaced": True, "move_resize_zoom": True, "history_retained": True}
 
 
 def verify_avatar_caption(root: tk.Tk, assets: Path) -> dict:
@@ -27,6 +123,8 @@ def verify_avatar_caption(root: tk.Tk, assets: Path) -> dict:
         avatar.place(x=16, y=top)
         tk.Label(root, text="alex@example.com", font=("Segoe UI", 10, "bold"),
                  background="white", foreground="#242424").place(x=68, y=top)
+    tk.Label(root, text="X", font=("Segoe UI", 12), background="white",
+             foreground="#242424").place(x=720, y=8)
     tk.Label(root, text="We need to update the", font=("Segoe UI", 16),
              background="white", foreground="#242424").place(x=68, y=28)
     tk.Label(root, text="camera calibration before the next release.",
@@ -163,38 +261,37 @@ def verify(report: Path, assets: Path, overlay_factory) -> None:
         overlay.destroy()
         actual_overlay = overlay_factory(root)
         check(actual_overlay.excluded, "Caption Dock overlay could not be excluded.")
-        check(actual_overlay.try_cover(translated, region),
-              "The runtime cover check did not accept the unchanged capture.")
+        actual_overlay.show(translated, region, cover=False)
+        screen.place(actual_overlay.handle, screen.Region(100, 150, 720, 220))
         root.update()
         screen.flush_compositor()
         check(actual_overlay.window.winfo_viewable(), "Caption Dock overlay was hidden.")
         check(screen.capture(region).tobytes() == reference.tobytes(),
               "Caption Dock overlay interfered with subsequent capture.")
-        check(screen.set_affinity(actual_overlay.handle, 0),
-              "Could not simulate an overlay that appears in capture.")
-        check(not actual_overlay.try_cover(translated, region),
-              "The runtime cover check accepted an obstructed capture.")
-        actual_overlay.show(translated, region, cover=False)
+        actual_overlay.dismiss()
+        actual_overlay.reopen()
         root.update()
         screen.flush_compositor()
         check(screen.capture(region).tobytes() == reference.tobytes(),
-              "The adjacent overlay interfered with capture.")
-        result["cover_fallback"] = True
+              "Reopening the translation window lost capture exclusion.")
+        check(not screen.get_style(actual_overlay.handle, screen.GWL_EXSTYLE)
+              & screen.WS_EX_TRANSPARENT, "The movable translation window ignores mouse input.")
+        result["interactive_capture_exclusion"] = True
         actual_overlay.show(Speech("alex@example.com", translated), region, cover=False)
         root.update()
-        check(actual_overlay.speaker.cget("text") == "alex",
+        rendered = actual_overlay.text.get("1.0", "end")
+        check(rendered.splitlines()[0].strip() == "alex",
               "The speaker chip did not shorten the account address.")
-        check(actual_overlay.label.cget("text") == translated,
+        check(translated in rendered and "@" not in rendered,
               "The speaker account entered the translated body label.")
-        check(actual_overlay.speaker.winfo_y() < actual_overlay.label.winfo_y(),
-              "The speaker chip was not placed above the translation.")
         actual_overlay.show(translated, region, cover=False)
         root.update()
-        check(not actual_overlay.speaker.winfo_ismapped(),
+        check("alex" not in actual_overlay.text.get("1.0", "end"),
               "A previous speaker chip remained on an anonymous caption.")
         result["speaker_chip"] = True
         result["teams_name_rows"] = verify_speaker_caption(root, assets, engine)
         result["teams_avatar_rows"] = verify_avatar_caption(root, assets)
+        result["live_transcript"] = verify_runtime(root, overlay_factory)
         result["passed"] = True
     except (OSError, RuntimeError, ValueError, tk.TclError) as error:
         result["error"] = str(error)
