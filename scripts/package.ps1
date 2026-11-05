@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true
 $root = Split-Path -Parent $PSScriptRoot
-$version = "0.1.4"
+$version = "0.1.5"
 $exeName = "caption-dock-v$version-portable"
 $Python = (Resolve-Path -LiteralPath $Python).Path
 $NativeRoot = (Resolve-Path -LiteralPath $NativeRoot).Path

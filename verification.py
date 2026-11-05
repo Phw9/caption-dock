@@ -182,7 +182,7 @@ def verify(report: Path, assets: Path, overlay_factory) -> None:
         result["cover_fallback"] = True
         actual_overlay.show(Speech("alex@example.com", translated), region, cover=False)
         root.update()
-        check(actual_overlay.speaker.cget("text") == "화자  alex",
+        check(actual_overlay.speaker.cget("text") == "alex",
               "The speaker chip did not shorten the account address.")
         check(actual_overlay.label.cget("text") == translated,
               "The speaker account entered the translated body label.")

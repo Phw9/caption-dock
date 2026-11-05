@@ -100,7 +100,7 @@ class Overlay:
             identity = hashlib.blake2s(text.speaker.encode()).digest()[0]
             color_index = identity % len(SPEAKER_COLORS)
             background, foreground = SPEAKER_COLORS[color_index]
-            self.speaker.configure(text="화자  " + name, background=background,
+            self.speaker.configure(text=name, background=background,
                                    foreground=foreground)
             self.speaker.pack(before=self.label, anchor="w", padx=14, pady=(10, 0))
         else:

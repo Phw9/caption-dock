@@ -5,7 +5,7 @@ Teams의 영어 실시간 자막을 켠 뒤 번역할 영역을 드래그하면 
 CPU에서 실행되며 모델은 실행파일에 포함되어 있습니다.
 
 1. [릴리스](https://github.com/Phw9/caption-dock/releases/latest)에서
-   `caption-dock-v0.1.4-portable.exe`를 내려받아 실행합니다.
+   `caption-dock-v0.1.5-portable.exe`를 내려받아 실행합니다.
 2. Teams나 YouTube에서 영어 자막을 켭니다. 앱의 **영역 선택**을 누르고 영어
    자막 줄을 드래그합니다. **Esc**로 선택을 취소할 수 있습니다.
 3. 번역은 영어 자막 옆에 표시됩니다. **영어 자막 가리기**를 켜면
@@ -57,6 +57,6 @@ Run the packaged smoke test from an unlocked desktop. It opens a synthetic
 caption and overlay briefly and records results for that synthetic input.
 
 ```powershell
-Start-Process -Wait -FilePath ./dist/caption-dock-v0.1.4-portable.exe -ArgumentList '--self-test build/report.json'
+Start-Process -Wait -FilePath ./dist/caption-dock-v0.1.5-portable.exe -ArgumentList '--self-test build/report.json'
 Get-Content build/report.json
 ```
