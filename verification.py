@@ -6,10 +6,41 @@ from time import perf_counter
 
 from captions import SentenceBuffer
 from pipeline import Ocr, Translator
-from speech import SpeechBuffer, display_translation, split_speech
+from speech import Speech, SpeechBuffer, display_translation, split_speech
 import screen
 
 SAMPLE = "The meeting starts in five minutes."
+
+
+def verify_avatar_caption(root: tk.Tk, assets: Path) -> dict:
+    for child in root.winfo_children():
+        child.destroy()
+    root.configure(background="white")
+    region = screen.Region(100, 150, 760, 180)
+    screen.place(screen.hwnd(root), region)
+    for top in (8, 76):
+        avatar = tk.Canvas(root, width=40, height=40, background="white",
+                           highlightthickness=0)
+        avatar.create_oval(0, 0, 39, 39, fill="#d9eff2", outline="")
+        avatar.create_text(20, 20, text="박현", font=("Malgun Gothic", 12),
+                           fill="#47777b")
+        avatar.place(x=16, y=top)
+        tk.Label(root, text="alex@example.com", font=("Segoe UI", 10, "bold"),
+                 background="white", foreground="#242424").place(x=68, y=top)
+    tk.Label(root, text="We need to update the", font=("Segoe UI", 16),
+             background="white", foreground="#242424").place(x=68, y=28)
+    tk.Label(root, text="camera calibration before the next release.",
+             font=("Segoe UI", 16), background="white",
+             foreground="#242424").place(x=68, y=96)
+    root.update()
+    screen.flush_compositor()
+    with Ocr(assets) as ocr:
+        speech = split_speech(ocr.read_lines(screen.capture(region), True), True)
+    expected = "We need to update the camera calibration before the next release."
+    check(speech == [Speech("alex@example.com", expected)],
+          "Avatar or repeated account text entered the Teams speech body.")
+    return {"speaker": speech[0].speaker, "source": speech[0].text}
+
 
 def verify_speaker_caption(root: tk.Tk, assets: Path, engine: Translator) -> dict:
     for child in root.winfo_children():
@@ -149,7 +180,21 @@ def verify(report: Path, assets: Path, overlay_factory) -> None:
         check(screen.capture(region).tobytes() == reference.tobytes(),
               "The adjacent overlay interfered with capture.")
         result["cover_fallback"] = True
+        actual_overlay.show(Speech("alex@example.com", translated), region, cover=False)
+        root.update()
+        check(actual_overlay.speaker.cget("text") == "화자  alex",
+              "The speaker chip did not shorten the account address.")
+        check(actual_overlay.label.cget("text") == translated,
+              "The speaker account entered the translated body label.")
+        check(actual_overlay.speaker.winfo_y() < actual_overlay.label.winfo_y(),
+              "The speaker chip was not placed above the translation.")
+        actual_overlay.show(translated, region, cover=False)
+        root.update()
+        check(not actual_overlay.speaker.winfo_ismapped(),
+              "A previous speaker chip remained on an anonymous caption.")
+        result["speaker_chip"] = True
         result["teams_name_rows"] = verify_speaker_caption(root, assets, engine)
+        result["teams_avatar_rows"] = verify_avatar_caption(root, assets)
         result["passed"] = True
     except (OSError, RuntimeError, ValueError, tk.TclError) as error:
         result["error"] = str(error)

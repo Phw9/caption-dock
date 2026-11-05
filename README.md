@@ -5,7 +5,7 @@ Teams의 영어 실시간 자막을 켠 뒤 번역할 영역을 드래그하면 
 CPU에서 실행되며 모델은 실행파일에 포함되어 있습니다.
 
 1. [릴리스](https://github.com/Phw9/caption-dock/releases/latest)에서
-   `caption-dock-v0.1.3-portable.exe`를 내려받아 실행합니다.
+   `caption-dock-v0.1.4-portable.exe`를 내려받아 실행합니다.
 2. Teams나 YouTube에서 영어 자막을 켭니다. 앱의 **영역 선택**을 누르고 영어
    자막 줄을 드래그합니다. **Esc**로 선택을 취소할 수 있습니다.
 3. 번역은 영어 자막 옆에 표시됩니다. **영어 자막 가리기**를 켜면
@@ -13,10 +13,11 @@ CPU에서 실행되며 모델은 실행파일에 포함되어 있습니다.
    **일시정지**를 누르면 처리를 멈춥니다. 자막 위치가 바뀌면 영역을 다시
    선택합니다.
 
-Teams 자막의 첫 줄에 화자 이름이 있다면, 영역을 선택하기 전에
-**Teams 화자 이름 분리**를 켜고 이름과 발화 줄을 함께 선택하세요.
-이름은 그대로 윗줄에 표시하고 발화만 번역합니다. 화자가 바뀌면 문장을
-서로 섞지 않습니다. 이름 줄이 없는 YouTube 등의 자막에서는 이 옵션을 끕니다.
+Teams에서는 기본으로 켜진 **Teams 화자 이름 분리**를 사용하고 이름과 발화 줄을
+함께 선택하세요. 계정 열 왼쪽의 프로필 아이콘은 읽기에서 제외합니다.
+이름은 작은 화자 칩에 표시하고, 발화만 큰 글씨로 번역합니다. 이메일은 아이디
+부분만 표시합니다. 화자가 바뀌면 문장을 서로 섞지 않습니다. 이름 줄이 없는
+YouTube 등의 자막에서는 이 옵션을 끕니다.
 같은 화자의 ID가 반복되는 Teams 자막과, 위쪽이 잘리며 넘어가는 자막도
 이미 처리한 문장을 반복 번역하지 않도록 연결합니다.
 
@@ -56,6 +57,6 @@ Run the packaged smoke test from an unlocked desktop. It opens a synthetic
 caption and overlay briefly and records results for that synthetic input.
 
 ```powershell
-Start-Process -Wait -FilePath ./dist/caption-dock-v0.1.3-portable.exe -ArgumentList '--self-test build/report.json'
+Start-Process -Wait -FilePath ./dist/caption-dock-v0.1.4-portable.exe -ArgumentList '--self-test build/report.json'
 Get-Content build/report.json
 ```

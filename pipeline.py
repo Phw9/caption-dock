@@ -5,7 +5,7 @@ from pathlib import Path
 import ctranslate2
 import numpy as np
 import sentencepiece
-from speech import CaptionLine, read_tsv
+from speech import CaptionLine, TEXT_COLUMN_TOLERANCE, account_column, read_tsv
 
 MAX_SOURCE_TOKENS = 180
 
@@ -53,6 +53,7 @@ class Ocr:
         self.clear = self.bind("TessBaseAPIClear", None, handle)
         model = (assets / "tessdata" / "eng.traineddata").read_bytes()
         self.api = self.create()
+        self.teams_column: int | None = None
         if not self.api:
             raise RuntimeError("Could not create an OCR engine.")
         lstm_only, single_block = 1, 6
@@ -77,7 +78,7 @@ class Ocr:
     def read(self, image: np.ndarray) -> str:
         return "\n".join(line.text for line in self.read_lines(image))
 
-    def read_lines(self, image: np.ndarray) -> list[CaptionLine]:
+    def read_lines(self, image: np.ndarray, separate_speakers: bool = False) -> list[CaptionLine]:
         # Convert BGR to luminance with integer BT.601 weights scaled to 256.
         blue, green, red = image.astype(np.uint16).transpose(2, 0, 1)
         gray = ((29 * blue + 150 * green + 77 * red) >> 8).astype(np.uint8)
@@ -97,7 +98,18 @@ class Ocr:
             gray = ((gray.astype(np.uint16) - low) * 255 // (high - low)).astype(
                 np.uint8
             )
-            lines = self.recognize_lines(np.pad(gray, 12, constant_values=255))
+            gray = np.pad(gray, 12, constant_values=255)
+            lines = self.recognize_lines(gray)
+            if separate_speakers:
+                anchors = [column for line in lines
+                           if (column := account_column(line)) is not None]
+                if anchors:
+                    self.teams_column = max(
+                        0, sorted(anchors)[len(anchors) // 2] - TEXT_COLUMN_TOLERANCE
+                    )
+                if self.teams_column is not None and 0 < self.teams_column < gray.shape[1]:
+                    # Re-read the text column so an avatar cannot merge into a word.
+                    lines = self.recognize_lines(gray[:, self.teams_column:])
         return lines
 
     def recognize(self, gray: np.ndarray) -> str:
