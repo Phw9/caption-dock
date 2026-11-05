@@ -39,7 +39,7 @@ def verify_runtime(root: tk.Tk, viewer_factory) -> dict:
     stop = Event()
     events = SimpleQueue()
     worker = Thread(target=read_captions,
-                    args=(region, stop, events, Lock(), True), daemon=True)
+                    args=(region, stop, events, Lock()), daemon=True)
     rendered: dict[str, float] = {}
 
     def pump() -> None:

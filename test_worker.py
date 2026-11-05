@@ -3,10 +3,13 @@ from collections import OrderedDict
 from concurrent.futures import Future
 from queue import SimpleQueue
 from threading import Event, Lock
+from time import monotonic
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from speech import Speech
+import numpy as np
+
+from speech import CaptionLine, Speech
 from transcript import CaptionRequest
 from worker import CaptionWorker
 import screen
@@ -15,7 +18,22 @@ import screen
 class CaptionWorkerTest(unittest.TestCase):
     def make_worker(self) -> CaptionWorker:
         return CaptionWorker(screen.Region(0, 0, 600, 200), Event(), SimpleQueue(),
-                             Lock(), True, False)
+                             Lock(), False)
+
+    def test_speaker_separation_is_always_applied_during_capture(self) -> None:
+        worker = self.make_worker()
+        ocr = Mock()
+        ocr.read_lines.return_value = [
+            CaptionLine("alex@example.com", 0, 12),
+            CaptionLine("Please check the camera.", 18, 20),
+        ]
+        frame = np.zeros((200, 600, 3), dtype=np.uint8)
+        with patch("screen.capture", return_value=frame):
+            worker.observe(ocr)
+        ocr.read_lines.assert_called_once_with(frame, separate_speakers=True)
+        requests = worker.buffer.take(monotonic() + 1.0)
+        self.assertEqual([request.speech for request in requests],
+                         [Speech("alex@example.com", "Please check the camera.")])
 
     def test_all_visible_rows_remain_queued(self) -> None:
         worker = self.make_worker()

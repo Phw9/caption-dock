@@ -26,12 +26,11 @@ def translate_timed(speech: Speech, translate: Callable[[str], str]) -> tuple[Sp
 
 
 class CaptionWorker:
-    def __init__(self, region, stop, events, capture_lock, separate_speakers, measure) -> None:
+    def __init__(self, region, stop, events, capture_lock, measure: bool) -> None:
         self.region = region
         self.stop = stop
         self.events = events
         self.capture_lock = capture_lock
-        self.separate_speakers = separate_speakers
         self.measure = measure
         self.buffer = TranscriptBuffer()
         self.waiting: OrderedDict[int, CaptionRequest] = OrderedDict()
@@ -47,8 +46,8 @@ class CaptionWorker:
             frame = screen.capture(self.region)
         fingerprint = hashlib.blake2s(frame.tobytes()).digest()
         if fingerprint != self.previous:
-            rows = ocr.read_lines(frame, self.separate_speakers)
-            speech = split_speech(rows, self.separate_speakers, self.speaker,
+            rows = ocr.read_lines(frame, separate_speakers=True)
+            speech = split_speech(rows, True, self.speaker,
                                   merge_same_speaker=False)
             if speech:
                 self.speaker = speech[-1].speaker
@@ -97,13 +96,13 @@ class CaptionWorker:
 
 def read_captions(
     region: screen.Region, stop: Event, events: SimpleQueue, capture_lock,
-    separate_speakers: bool = False, measure: bool = False,
+    measure: bool = False,
 ) -> None:
     translator = None
     try:
         translator = Translator(ASSETS / "opus")
         with Ocr(ASSETS) as ocr, ThreadPoolExecutor(max_workers=1) as executor:
-            worker = CaptionWorker(region, stop, events, capture_lock, separate_speakers, measure)
+            worker = CaptionWorker(region, stop, events, capture_lock, measure)
             worker.run(ocr, executor, translator)
     except (OSError, RuntimeError, ValueError):
         logging.exception("Caption worker failed")

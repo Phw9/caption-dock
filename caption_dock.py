@@ -79,7 +79,6 @@ class CaptionDock:
         root.resizable(False, False)
         root.protocol("WM_DELETE_WINDOW", self.close)
         self.overlay = Overlay(root)
-        self.speakers = tk.BooleanVar(value=True)
         self.status = tk.StringVar(value="영어 자막 전체를 드래그해 선택하세요.")
         content = ttk.Frame(root, padding=18)
         content.pack(fill="both", expand=True)
@@ -91,10 +90,6 @@ class CaptionDock:
                                  state="disabled")
         self.toggle.pack(side="left", padx=6)
         ttk.Button(actions, text="번역창", command=self.overlay.reopen).pack(side="left")
-        self.speaker_mode = ttk.Checkbutton(
-            content, text="Teams 화자 이름 분리", variable=self.speakers
-        )
-        self.speaker_mode.pack(anchor="w", pady=(12, 0))
         ttk.Label(content, textvariable=self.status, wraplength=340,
                   width=48).pack(anchor="w", pady=(8, 0))
         root.after(60, self.drain)
@@ -116,14 +111,13 @@ class CaptionDock:
         self.overlay.clear()
         self.overlay.reopen()
         self.select.state(["disabled"])
-        self.speaker_mode.state(["disabled"])
         self.toggle.configure(text="일시정지")
         self.toggle.state(["!disabled"])
         self.status.set("번역을 준비하는 중…")
         Thread(
             target=read_captions,
             args=(self.region, self.stop, self.events, self.capture_lock,
-                  self.speakers.get(), self.performance_report is not None),
+                  self.performance_report is not None),
             daemon=True,
         ).start()
 
@@ -144,7 +138,6 @@ class CaptionDock:
                 self.status.set("일시정지됨")
             self.stop = None
             self.select.state(["!disabled"])
-            self.speaker_mode.state(["!disabled"])
             self.toggle.configure(text="시작")
             self.toggle.state(["!disabled"])
 
